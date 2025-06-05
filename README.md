@@ -14,7 +14,7 @@ The package is in a preliminary version and I will add additional functionality 
 
 ```bash
 pip install git+https://github.com/yourusername/orbiNest.git
-
+```
 
 ## Citation
 The code is based on the implementation from [Müller-Horn et al. 2024](https://ui.adsabs.harvard.edu/abs/2025A%26A...693A.161M/abstract) and the updated version is described in [Müller-Horn et al. 2025](https://ui.adsabs.harvard.edu/abs/2025arXiv250406973M/abstract).
