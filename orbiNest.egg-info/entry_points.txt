@@ -1,0 +1,2 @@
+[console_scripts]
+orbinest-example = examples.run_mock_example:main
