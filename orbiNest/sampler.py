@@ -32,7 +32,7 @@ class OrbitalSampler:
             wrapped_params=self.periodic,
             vectorized=True,
             log_dir=os.path.join(self.results_dir, f'orbit_{self.star_id}'),
-            resume='overwrite'
+            resume='resume'
         )
         self._sampler.stepsampler = ultranest.stepsampler.SliceSampler(nsteps=20,generate_direction=ultranest.stepsampler.generate_mixture_random_direction)
 
