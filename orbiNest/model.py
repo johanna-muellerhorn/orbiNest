@@ -79,3 +79,11 @@ def rv_model(theta, t, T_ref=51544.):
 
     rv = K * (np.cos(w + T) + e * np.cos(w)) + off
     return rv
+
+def binary_mass_function(m1=1., m2=1., period=1., K=1, e=0.,inc=np.pi/2, use_masses=False):
+    if use_masses:
+        binf = (m2*np.sin(inc))**3/(m1+m2)**2
+        return binf
+    else:
+        binf = (period*d2s)*(K*1e3)**3/(2*np.pi*G)*(1-e**2)**(3/2)
+        return binf/Msun

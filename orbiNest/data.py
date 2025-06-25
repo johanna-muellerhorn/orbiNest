@@ -8,7 +8,10 @@ StarData = namedtuple('StarData', ['star_id','times', 'rvs', 'rvs_err'])
 class RVDataLoader:
     def __init__(self, file, id_col='Star_Id', time_col='MJD',
                  rv_col='RV', rv_err_col='RV_err'):
-        self.df = pd.read_csv(file)
+        if type(file) == str:
+            self.df = pd.read_csv(file)
+        else:
+            self.df = file
         self.id_col = id_col
         self.time_col = time_col
         self.rv_col = rv_col
@@ -31,13 +34,14 @@ class RVDataLoader:
         )
 
 class OrbitFitLoader:
-    def __init__(self, results_dir=None):
+    def __init__(self, results_dir=None, load_samples=True):
         self.results_dir = results_dir
-        self.samples = self._get_orbit_samples()
+        if load_samples:
+            self.samples = self._get_orbit_samples()
         self.results = self._get_orbit_results()
 
     def _get_orbit_samples(self):
-        orbit_samples = np.genfromtxt(self.results_dir+'chains/equal_weighted_post.txt', skip_header=1)
+        orbit_samples = np.genfromtxt(self.results_dir+'chains/equal_weighted_post.txt', skip_header=1)[::10]
         return orbit_samples
 
     def _get_orbit_results(self):

@@ -10,7 +10,7 @@ from ultranest.plot import PredictionBand
 import matplotlib.pyplot as plt
 import numpy as np
 
-def plot_sample(star_id, rvs, rvs_err, times, orbitfit, phase=False, plot_path='./',T_ref=51544.):
+def plot_sample(star_id, rvs, rvs_err, times, orbitfit, phase=False, plot_path='./',T_ref=51544.,show=False):
     truths = orbitfit.results['maximum_likelihood']['point']
     time_array = np.linspace(np.min(times), np.max(times), 10000)
     phase_array = np.linspace(0., 2 * np.pi, 1000)
@@ -53,11 +53,14 @@ def plot_sample(star_id, rvs, rvs_err, times, orbitfit, phase=False, plot_path='
     ax1.legend(loc='upper left')
 
     plt.tight_layout()
-    plt.savefig(plot_path+f'plot_orbit_{"phase" if phase else "time"}.pdf')
-    plt.close()
+    plt.savefig(plot_path+f'plot_orbit_{"phase" if phase else "time"}_{star_id}.pdf')
+    if show:
+        plt.show()
+    else:
+        plt.close()
 
 
-def plot_prediction_band(star_id, rvs, rvs_err, times, orbitfit, plot_path='./'):
+def plot_prediction_band(star_id, rvs, rvs_err, times, orbitfit, plot_path='./',show=False):
     textargs = dict(horizontalalignment='center',verticalalignment='bottom')
     plt.rcParams.update({'font.size': 12})
     time_array = np.linspace(np.min(times),np.max(times),2000)#np.max(time),1000)
@@ -78,12 +81,14 @@ def plot_prediction_band(star_id, rvs, rvs_err, times, orbitfit, plot_path='./')
     plt.legend(loc='upper left')
     plt.tight_layout()
     plt.savefig(plot_path+f'plot_band_{star_id}.pdf')
-    #plt.show()
-    plt.close()
+    if show:
+        plt.show()
+    else:
+        plt.close()
 
 from matplotlib.gridspec import GridSpec
 
-def plot_summary(star_id, rvs, rvs_err, times, orbitfit, plot_path='./',T_ref=51544.):
+def plot_summary(star_id, rvs, rvs_err, times, orbitfit, plot_path='./',T_ref=51544.,show=False):
     samples = orbitfit.samples
     fit_vals = orbitfit.results['maximum_likelihood']['point']
 
@@ -119,7 +124,8 @@ def plot_summary(star_id, rvs, rvs_err, times, orbitfit, plot_path='./',T_ref=51
     # Plot data points (error bars and scatter)
     ax2.errorbar(phases*fit_vals[1], rvs, yerr=rvs_err, fmt='ko', ecolor='C3', lw=2, zorder=3, markersize=4)
     ax2.plot(phase_array*fit_vals[1], y_phase, lw=2., label='Keplerian orbit')
-
+    ax2.text(0.05, 0.95, r'$f_\mathrm{bin} = $'+f'{np.round(binary_mass_function(K=fit_vals[0], period=fit_vals[1], e=fit_vals[3]),2)} Msun',
+    va='top', transform=ax2.transAxes )
     ax3.errorbar(phases*fit_vals[1], rvs - rv_model(fit_vals, times, T_ref=51544.).reshape(-1),
                  yerr=rvs_err, fmt='ko', ecolor='C3', lw=2, zorder=3, markersize=4)
 
@@ -146,4 +152,7 @@ def plot_summary(star_id, rvs, rvs_err, times, orbitfit, plot_path='./',T_ref=51
     ax6.set_ylabel('Count')
 
     plt.savefig(plot_path+f'plot_summary_{star_id}.pdf')
-    plt.close()
+    if show:
+        plt.show()
+    else:
+        plt.close()
