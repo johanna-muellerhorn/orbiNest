@@ -5,6 +5,8 @@ import numpy as np
 import ultranest
 import ultranest.stepsampler
 from .model import rv_model
+import gaiamock.gaiamock as gaiamock
+_C_FUNCS = gaiamock.read_in_C_functions()
 
 class OrbitalSamplerGaia:
     def __init__(self, target, hp, times, rvs, rvs_err,
@@ -12,14 +14,17 @@ class OrbitalSamplerGaia:
                  param_labels=None, periodic=None,
                  results_dir='./orbits/', #star_id='star',
                  nlive=1000, fit_type='rvs'):
+        self.target = target
+        self.hp = hp
         self.times = times
         self.rvs = rvs
         self.rvs_err = rvs_err
         self.prior_transform = prior_transform
-        self.star_id = target.source_id
+        self.star_id = self.target.source_id
         self.results_dir = results_dir
         self.nlive = nlive
         self.fit_type = fit_type
+
 
         if (self.fit_type == 'rvs'):
             self.log_likelihood = self.log_likelihood_rvs
@@ -28,76 +33,23 @@ class OrbitalSamplerGaia:
         if (self.fit_type == 'gaia_ruwe'):
             self.log_likelihood = self.log_likelihood_ruwe
 
-        if (self.fit_type == 'gaia_mean_and_amp') or (self.fit_type == 'gaia_ruwe'):
-            ra = target.ra
-            dec = target.dec
-            parallax = target.parallax
-            pmra = target.pmra
-            pmdec = target.pmdec
-            mstar = target.mass  # e.g., iso_mass
-            phot_g_mean_mag = target.phot_g_mean_mag
-            t_ast_yr = target.t_ast_yr
-            psi = target.psi
-            plx_factor = target.plx_factor
-            epoch_err_per_transit = target.epoch_err_per_transit
-            rv_nb_transits = target.rv_nb_transits
-
-            # Hyperparameters
-            f = hp.f
-            key_yspectro = hp.key_yspectro
-            bias_astro = hp.bias_astro
-            bias_spectro = hp.bias_spectro # bias factor for RV uncertainty
-            data_release = hp.data_release
-
-            # Unpack the parameters from theta
-            period = 10**theta[0]
-            mcompanion = 10**theta[1]
-            inc = np.arccos(theta[2])
-            ecc, omega, w, Tp = theta[3], theta[4], theta[5], theta[6]
-
-            # Predict astrometric observable (RUWE)
-            ypred_astro = astrometric.predict_ruwe(ra=ra,
-                                        dec=dec,
-                                        parallax=parallax,
-                                        pmra=pmra,
-                                        pmdec=pmdec,
-                                        m1=mstar,
-                                        m2=mcompanion,
-                                        period=period,
-                                        Tp=Tp,
-                                        ecc=ecc,
-                                        omega=omega,
-                                        inc=inc,
-                                        w=w,
-                                        phot_g_mean_mag=phot_g_mean_mag,
-                                        f=f,
-                                        t_ast_yr=t_ast_yr,
-                                        psi=psi,
-                                        plx_factor=plx_factor,
-                                        epoch_err_per_transit=epoch_err_per_transit,
-                                        data_release=data_release,
-                                        bias_factor=bias_astro)
-
-            # Predict spectroscopic observable (radial velocity error)
-            ypred_spectro = spectroscopic.predict_radial_velocity_error(ra=ra,
-                                                          dec=dec,
-                                                          m1=mstar,
-                                                          m2=mcompanion,
-                                                          period=period,
-                                                          Tp=Tp,
-                                                          ecc=ecc,
-                                                          inc=inc,
-                                                          w=w,
-                                                          data_release=data_release,
-                                                          bias_factor=bias_spectro,
-                                                          t_ast_yr=t_ast_yr,
-                                                          rv_nb_transits=rv_nb_transits,
-                                                          key_yspectro=key_yspectro)
-
         #    rv_err = np.sqrt((np.std(radial_velocities) / np.sqrt(len(radial_velocities)) * np.sqrt(np.pi / 2))**2 + 0.113**2)
         # Default parameter names and periodic flags if not provided
         self.param_labels = param_labels or ['K [km/s]', 'P [d]', 'tau', 'e', 'omega', 'offset', 'cosi']
         self.periodic = periodic or [False, False, True, False, True, False, False]
+
+        print('INITIALIZING STAR AND SAMPLER:')
+        print(self.star_id, self.results_dir)
+        print('Fit type:', self.fit_type)
+        print('Fit parameters:', self.param_labels)
+
+        print('----------------- STAR INFO ------------------')
+        print('Gaia RV:', self.target.radial_velocity)
+        print('Gaia RV err:', self.target.radial_velocity_error)
+        print('Gaia RV Amplitude:', self.target.rv_amplitude_robust)
+        print('Gaia N epochs / RVs:', len(self.target.t_ast_yr), self.target.rv_nb_transits)
+        print(self.hp.eps_astro, self.hp.eps_spectro)
+        print('----------------------------------------------')
 
         # Initialize sampler object but do not run yet
         self._sampler = ultranest.ReactiveNestedSampler(
@@ -121,38 +73,66 @@ class OrbitalSamplerGaia:
         loglike = -0.5 * np.sum(((self.rvs - model) ** 2) * inv_sigma2, axis=1)
         return loglike
 
-    def log_likelihood_mean_and_amp(self, theta):
+    def log_likelihood_mean_and_amp(self, theta, T_ref=51544., gaia_ref=57388.5):
         # log-likelihood, for parameter vector theta=(logK, logf, mean anomaly, e, omega, jitter, offset)
         theta = np.atleast_2d(theta)
         model = rv_model(theta, self.times)
         inv_sigma2 = 1.0 / (self.rvs_err ** 2)
         loglike = -0.5 * np.sum(((self.rvs - model) ** 2) * inv_sigma2, axis=1)
 
-        gaia_rv_pred = rv_model(theta, self.target.times_gaia)
-        gaia_rv_median_pred = np.median(gaia_rv_pred)
-        gaia_rv_amp_pred = np.max(gaia_rv_pred) - np.min(gaia_rv_pred)
-        gaia_rv_err_pred = np.median(gaia_rv_pred)
+        K = theta[:, [0]]
+        P = theta[:, [1]]
+        tau = theta[:, [2]]
+        e = np.abs(theta[:, [3]])
+        w = theta[:, [4]]
+        off = theta[:, [5]]
+        cosi = theta[:, [6]]
 
-        gaia_rv_amp_pred = np.max(gaia_rv_pred) - np.min(gaia_rv_pred)
-        loglike_gaia_mean = - 0.5 * np.log(self.target.rv_error_gaia**2) - 0.5 * (gaia_rv_mean_pred-self.target.rv_gaia)**2 /(self.target.rv_error_gaia**2)
-        loglike_gaia_amp  = - 0.5 * np.log(self.target.rv_error_gaia**2) - 0.5 * (gaia_rv_amp_pred-self.target.rv_amplitude_gaia)**2 /(self.target.rv_error_gaia**2)
+        t_rvs_day = self.target.t_ast_yr * 365.25 + gaia_ref # converting to modified julian dates
 
+        if self.target.rv_nb_transits is not None and self.target.rv_nb_transits < len(t_rvs_day):
+            t_rvs_day = np.random.choice(t_rvs_day, size=int(self.target.rv_nb_transits), replace=False)
+
+        gaia_rvs = rv_model(theta, t_rvs_day)
+
+        Tp = tau*P+T_ref-gaia_ref
+        pred_rv_amplitude_robust = (np.max(gaia_rvs,axis=1) - np.min(gaia_rvs,axis=1))*self.hp.bias_spectro
+        pred_radial_velocity = (np.median(gaia_rvs,axis=1))
+
+        loglike_gaia_mean = - 0.5 * (pred_radial_velocity-self.target.radial_velocity)**2 /(self.target.radial_velocity_error**2)
+        loglike_gaia_amp  = - 0.5 * ((np.log(self.target.rv_amplitude_robust / pred_rv_amplitude_robust) / self.hp.eps_spectro))**2
         #print('RV mean and amplitude:', self.target.rv_gaia, self.target.rv_amplitude_gaia, gaia_rv_mean_pred, gaia_rv_amp_pred, loglike, loglike_gaia_mean, loglike_gaia_amp)
-        return (loglike + loglike_gaia_mean + loglike_gaia_amp).sum(axis=1)
+        return (loglike + loglike_gaia_mean + loglike_gaia_amp)
 
     def log_likelihood_ruwe(self,theta):
+        # log-likelihood, for parameter vector theta=(logK, logf, mean anomaly, e, omega, jitter, offset)
         theta = np.atleast_2d(theta)
         model = rv_model(theta, self.times)
         inv_sigma2 = 1.0 / (self.rvs_err ** 2)
-        # Negative chi^2 / 2 (normal log likelihood without constant terms)
         loglike = -0.5 * np.sum(((self.rvs - model) ** 2) * inv_sigma2, axis=1)
 
-        gaia_rv_pred = RVmodel(theta, self.target.times_gaia)
-        gaia_rv_mean_pred = np.mean(gaia_rv_pred)
-        gaia_rv_amp_pred = np.max(gaia_rv_pred) - np.min(gaia_rv_pred)
+        K = theta[:, [0]]
+        P = theta[:, [1]]
+        tau = theta[:, [2]]
+        e = np.abs(theta[:, [3]])
+        w = theta[:, [4]]
+        off = theta[:, [5]]
+        cosi = theta[:, [6]]
 
-        loglike_gaia_mean = - 0.5 * np.log(self.target.rv_error_gaia**2) - 0.5 * (gaia_rv_mean_pred-self.target.rv_gaia)**2 /(self.target.rv_error_gaia**2)
-        loglike_gaia_amp  = - 0.5 * np.log(self.target.rv_error_gaia**2) - 0.5 * (gaia_rv_amp_pred-self.target.rv_amplitude_gaia)**2 /(self.target.rv_error_gaia**2)
+        t_rvs_day = self.target.t_ast_yr * 365.25 + gaia_ref # converting to modified julian dates
+
+        if self.target.rv_nb_transits is not None and self.target.rv_nb_transits < len(t_rvs_day):
+            t_rvs_day = np.random.choice(t_rvs_day, size=int(self.target.rv_nb_transits), replace=False)
+
+        gaia_rvs = rv_model(theta, t_rvs_day)
+
+        Tp = tau*P+T_ref-gaia_ref
+        pred_rv_amplitude_robust = (np.max(gaia_rvs,axis=1) - np.min(gaia_rvs,axis=1))*self.hp.bias_spectro
+        pred_radial_velocity = (np.median(gaia_rvs,axis=1))
+
+        loglike_gaia_mean = - 0.5 * (pred_radial_velocity-self.target.radial_velocity)**2 /(self.target.radial_velocity_error**2)
+        loglike_gaia_amp  = - 0.5 * ((np.log(self.target.rv_amplitude_robust / pred_rv_amplitude_robust) / self.hp.eps_spectro))**2
+        #print('RV mean and amplitude:', self.target.rv_gaia, self.target.rv_amplitude_gaia, gaia_rv_mean_pred, gaia_rv_amp_pred, loglike, loglike_gaia_mean, loglike_gaia_amp)
 
         #tau = ((Tp+gaia_ref-T_ref)/P)%1
         Tp = tau*P+T_ref-gaia_ref
@@ -164,17 +144,32 @@ class OrbitalSamplerGaia:
         astrometry = calculate_astrometry(self.target.ra_deg,self.target.dec_deg,self.target.parallax,self.target.GaiaG,self.target.pmra,self.target.pmdec,self.target.mass,
                                            P, mcomp, e,i, Tp=Tp, omega=np.pi/2, w=w,f=f)
 
-        gaia_ruwe_pred = gaiamock.check_ruwe(*astrometry,binned=True)[0]
+        # Predict astrometric observable (RUWE)
+        gaia_ruwe_pred = astrometric.predict_ruwe(ra=self.target.ra,
+                                    dec=self.target.dec,
+                                    parallax=self.target.parallax,
+                                    pmra=self.target.pmra,
+                                    pmdec=self.target.pmdec,
+                                    m1=self.target.mass,
+                                    m2=mcompanion,
+                                    period=period,
+                                    Tp=Tp,
+                                    ecc=ecc,
+                                    omega=omega,
+                                    inc=inc,
+                                    w=w,
+                                    phot_g_mean_mag=self.target.phot_g_mean_mag,
+                                    f=self.hp.f,
+                                    t_ast_yr=self.target.t_ast_yr,
+                                    psi=self.target.psi,
+                                    plx_factor=self.target.plx_factor,
+                                    epoch_err_per_transit=self.target.epoch_err_per_transit,
+                                    data_release=self.hp.data_release,
+                                    bias_factor=self.hp.bias_astro)
+
         #loglike_gaia_ruwe  = - 1000. * int((ruwe_pred-self.target.ruwe)>self.target.ruwe_error)
-        loglike_gaia_ruwe  = - 0.5 * np.log(self.target.ruwe_error**2) - 0.5 * (gaia_ruwe_pred-self.target.ruwe)**2 /(self.target.ruwe_error**2)
-
-        #print(theta.shape, loglike.shape, loglike_gaia_mean.shape, loglike_gaia_amp.shape, loglike_gaia_ruwe.shape)
-        #print(theta, loglike, loglike_gaia_mean, loglike_gaia_amp, loglike_gaia_ruwe)
-        #ypred_photo = estimate_ellipsoidal_amplitude(self.target.mass,mcomp,self.target.radius,P,i)
-
-        #print('RV mean and amplitude:', self.target.rv_gaia, self.target.rv_amplitude_gaia, gaia_rv_mean_pred, gaia_rv_amp_pred, loglike, loglike_gaia_mean, loglike_gaia_amp)
-        #print(theta, fbin, mcomp, gaia_rv_mean_pred, gaia_rv_amp_pred, gaia_ruwe_pred, loglike,loglike_gaia_mean,loglike_gaia_amp,loglike_gaia_ruwe)
-        return (loglike + loglike_gaia_mean + loglike_gaia_amp+loglike_gaia_ruwe).sum()
+        loglike_gaia_ruwe  = - 0.5 * ((np.log(self.target.ruwe / gaia_ruwe_pred) / self.hp.eps_astro))**2
+        return (loglike + loglike_gaia_mean + loglike_gaia_amp+loglike_gaia_ruwe)
 
     def run(self, dlogz=0.01):
         self.result = self._sampler.run(min_num_live_points=self.nlive, frac_remain=dlogz)
