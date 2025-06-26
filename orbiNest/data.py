@@ -30,7 +30,7 @@ class RVDataLoader:
             star_id=star_id,
             times=star_df[self.time_col].values,
             rvs=star_df[self.rv_col].values,
-            rvs_err=star_df[self.rv_err_col].values
+            rvs_err=np.maximum(star_df[self.rv_err_col].values, 1e-3)
         )
 
 class OrbitFitLoader:
